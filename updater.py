@@ -7,13 +7,10 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 # --- CONFIGURATION ---
+# 1. VERSION URL (Raw text file)
+VERSION_URL = "https://raw.githubusercontent.com/tntcool48-dot/Guardian-Bot/main/version.txt"
 
-# 1. VERSION URL (The tiny text file)
-# Go to your Code tab -> Click version.txt -> Click "Raw" -> Copy that URL
-VERSION_URL = "https://raw.githubusercontent.com/tntcool48-dot/Guardian-Bot/refs/heads/main/version.txt"
-
-# 2. EXE URL (The big file from Releases)
-# Go to your Releases page -> Right-click the .exe asset -> Copy Link Address
+# 2. EXE URL (The Release file)
 EXE_URL = "https://github.com/tntcool48-dot/Guardian-Bot/releases/latest/download/GuardianBot.exe"
 
 CURRENT_VERSION_FILE = "version.dat"
@@ -27,7 +24,7 @@ class UpdaterApp:
         self.root.configure(bg="#2b2b2b")
         self.center_window()
 
-        self.status_label = tk.Label(self.root, text="Checking for updates...", 
+        self.status_label = tk.Label(self.root, text="Checking status...", 
                                      fg="white", bg="#2b2b2b", font=("Segoe UI", 10))
         self.status_label.pack(pady=(30, 10))
         
@@ -55,46 +52,51 @@ class UpdaterApp:
         return 0.0
 
     def check_update(self):
+        # PRIORITY CHECK: Is the bot even installed?
+        if not os.path.exists(MAIN_EXE_NAME):
+            self.status_label.config(text="Bot missing. Force installing...", fg="yellow")
+            # Force download version 1.0 initially
+            self.root.after(1000, lambda: self.download_update(1.0))
+            return
+
+        # If installed, check for updates normally
         try:
             print(f"Checking: {VERSION_URL}")
             response = requests.get(VERSION_URL, timeout=10)
             
             if response.status_code != 200:
-                self.launch_game("Could not connect to update server.")
+                self.launch_game("Offline Mode (Cannot check updates)")
                 return
             
             latest_version = float(response.text.strip())
             local_version = self.get_local_version()
-            bot_exists = os.path.exists(MAIN_EXE_NAME)
             
-            print(f"Local: {local_version} | Online: {latest_version} | Exists: {bot_exists}")
-
-            # NEW LOGIC: Update if version is newer OR if the bot file is missing
-            if latest_version > local_version or not bot_exists:
-                reason = "New version found" if latest_version > local_version else "Bot file missing"
-                self.status_label.config(text=f"{reason}. Downloading...")
+            if latest_version > local_version:
+                self.status_label.config(text=f"Update found (v{latest_version})...")
                 self.root.after(500, lambda: self.download_update(latest_version))
             else:
                 self.status_label.config(text="Up to date! Launching...")
                 self.root.after(1000, lambda: self.launch_game())
                 
         except Exception as e:
-            print(f"Update Check Failed: {e}")
-            # Only try to launch if the file actually exists
-            if os.path.exists(MAIN_EXE_NAME):
-                self.launch_game("Skipping update check (Error).")
-            else:
-                self.status_label.config(text="Update failed & Bot missing!", fg="red")
-                messagebox.showerror("Error", f"Could not download GuardianBot:\n{e}")
+            print(f"Check Failed: {e}")
+            self.launch_game("Skipping update check (Error).")
 
     def download_update(self, new_version):
         try:
+            print(f"Downloading from: {EXE_URL}")
             response = requests.get(EXE_URL, stream=True, timeout=30)
-            total_size = int(response.headers.get('content-length', 0))
+            
+            # CHECK IF LINK IS BROKEN
+            if response.status_code == 404:
+                messagebox.showerror("Download Error", "Error 404: The release file was not found on GitHub.\n\nDid you create the Release?")
+                self.root.destroy()
+                return
             
             if response.status_code != 200:
                 raise Exception(f"HTTP {response.status_code}")
 
+            total_size = int(response.headers.get('content-length', 0))
             temp_name = "new_update.tmp"
             block_size = 8192
             wrote = 0
@@ -110,20 +112,23 @@ class UpdaterApp:
 
             if os.path.exists(MAIN_EXE_NAME):
                 try: os.remove(MAIN_EXE_NAME)
-                except: pass # Try to overwrite anyway
+                except: pass 
 
             os.rename(temp_name, MAIN_EXE_NAME)
             
             with open(CURRENT_VERSION_FILE, "w") as f:
                 f.write(str(new_version))
                 
-            self.status_label.config(text="Update Complete!")
+            self.status_label.config(text="Install Complete!")
             self.root.after(1000, lambda: self.launch_game())
 
         except Exception as e:
             messagebox.showerror("Update Failed", f"Failed to download:\n{e}")
+            # Do not try to launch if we failed to download the missing file
             if os.path.exists(MAIN_EXE_NAME):
                 self.launch_game()
+            else:
+                self.root.destroy()
 
     def launch_game(self, msg=None):
         if msg: print(msg)
@@ -132,6 +137,7 @@ class UpdaterApp:
             self.root.destroy()
         else:
             self.status_label.config(text="Error: GuardianBot.exe missing!", fg="red")
+            messagebox.showerror("Error", "GuardianBot.exe is missing and could not be downloaded.")
 
 if __name__ == "__main__":
     UpdaterApp()
