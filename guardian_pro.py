@@ -218,11 +218,15 @@ def run_smart_farm_logic():
         # --- MOVEMENT ---
         state["keys_held"] = True 
 
-        # Stuck Check
+        # Stuck Check (Smart: Ignores falling)
         is_stuck = False
         if last_pos:
-            if pos['x'] == last_pos['x'] and pos['z'] == last_pos['z']: stuck_ticks += 1
-            else: stuck_ticks = 0 
+            # Only count as "stuck" if X, Z AND Y are all stopped.
+            # If Y is changing (pos['y'] != last_pos['y']), you are falling/jumping.
+            if pos['x'] == last_pos['x'] and pos['z'] == last_pos['z'] and pos['y'] == last_pos['y']:
+                stuck_ticks += 1
+            else:
+                stuck_ticks = 0 
         last_pos = pos
         
         if state["mode"] == "test" and state.get("force_stuck", False):
@@ -394,12 +398,51 @@ def monitor_logs():
                         time.sleep(0.1); continue
                     if '{"server":' in line: state["locraw_response"] = line
                     
-                    triggers = ["Sending to server", "Evacuating to Hub", "A disconnect occurred"]
-                    if not state["handling_incident"] and any(t in line for t in triggers):
-                        if state["mode"] == "normal":
-                            threading.Thread(target=handle_incident, daemon=True).start()
+                    # LIST 1: Slow Server Issues (Requires Warp)
+                    incident_triggers = ["Sending to server", "Evacuating to Hub", "A disconnect occurred"]
+                    
+                    # LIST 2: Fast Death Issues (Requires Reset Only)
+                    death_triggers = ["fell into the void", "slain by", "burned to death", "You died!"]
+
+                    if not state["handling_incident"]:
+                        # Check Server Issues
+                        if any(t in line for t in incident_triggers):
+                            if state["mode"] == "normal":
+                                threading.Thread(target=handle_incident, daemon=True).start()
+                        
+                        # Check Death Issues (NEW)
+                        elif any(t in line for t in death_triggers):
+                             threading.Thread(target=handle_death, daemon=True).start()
+
                 else: time.sleep(0.5)
     except: pass
+
+def handle_death():
+    """Handles death by quickly resetting safety checks without a full warp cycle."""
+    if state["handling_incident"]: return
+    state["handling_incident"] = True
+    
+    try:
+        print("[BOT] Death detected. Instant immunity applied.")
+        state["status_text"] = "DEATH DETECTED - RECOVERING"
+        state["bg_color"] = "#FFA500" # Orange for warning
+        
+        # 1. INSTANT IMMUNITY: The next wall hit will NOT trigger an alarm.
+        state["skip_dist_check"] = True
+        
+        # 2. Wait for Respawn (Standard Skyblock respawn is ~3-4s)
+        time.sleep(2)
+        
+        # 3. Resume
+        state["status_text"] = "RESUMING..."
+        state["bg_color"] = "#008000"
+        time.sleep(1)
+        state["bg_color"] = "#1e1e1e"
+        
+    except Exception as e:
+        print(f"Death Handle Error: {e}")
+    finally:
+        state["handling_incident"] = False
 
 def timer_loop():
     while state["running"]:
@@ -574,8 +617,13 @@ class LauncherApp:
             try:
                 with open(CONFIG_FILE, "r") as f:
                     data = json.load(f)
+                    self.macro_var.set(data.get("selected_macro", "yazan.ahk")) # Loads Yazan/Cizare
+                    self.mode_var.set(data.get("mode", "normal"))               # Loads Test/Normal
                     self.path_var.set(data.get("log_path", ""))
                     self.engine_var.set(data.get("engine", "ahk"))
+                    saved_idx = data.get("monitor_index", 0)
+                    if 0 <= saved_idx < len(self.monitors):
+                        self.monitor_combo.current(saved_idx)
             except: pass
 
     def start_bot(self):
@@ -606,7 +654,16 @@ class LauncherApp:
 
         # Save Config
         with open(CONFIG_FILE, "w") as f:
-            json.dump({"log_path": raw, "engine": self.engine_var.get(), "selected_macro": self.macro_var.get()}, f)
+            json.dump({
+                "log_path": raw, 
+                "engine": self.engine_var.get(), 
+                
+                # --- ADD THESE LINES ---
+                "selected_macro": self.macro_var.get(),  # Saves Yazan/Cizare
+                "mode": self.mode_var.get(),             # Saves Test/Normal
+                "monitor_index": self.monitor_combo.current() # Saves Monitor Selection
+                # -----------------------
+            }, f)
             
         state.update({
             "final_log_path": raw, 
