@@ -18,7 +18,7 @@ F3::
             try ControlFocus "ahk_exe javaw.exe"
             ToolTip("Farming: ON (Mouse Locked in Game)")
             SetTimer(FarmLoop, 100)
-            SetTimer(LockMouseInGame, 10) ; Runs every 10ms to freeze mouse
+            SetTimer(LockMouseInGame, 10)
             SetTimer(() => ToolTip(), -2000)
         }
         else
@@ -31,7 +31,7 @@ F3::
     {
         ToolTip("Farming: OFF")
         SetTimer(FarmLoop, 0)
-        SetTimer(LockMouseInGame, 0) ; Turn off mouse lock
+        SetTimer(LockMouseInGame, 0)
         ReleaseAll()
         SetTimer(() => ToolTip(), -2000)
     }
@@ -46,58 +46,63 @@ FarmLoop()
         return
 
     ; Auto-Correct Alt Key
-    ControlSend "{Alt up}",, mcWin
+    SafeControlSend "{Alt up}"
     
     ; --- PATTERN START ---
     if (!SleepCheck(1406)) 
         return
 
-    ControlSend "{d down}",, mcWin
+    ; Move Right (D) and Mine (J)
+    SafeControlSend "{d down}"
     Sleep 31
-    ControlSend "{j down}",, mcWin 
+    SafeControlSend "{j down}"
     
     if (!SleepCheck(82156)) 
         return
 
-    ControlSend "{d up}",, mcWin
+    ; Stop Right (D)
+    SafeControlSend "{d up}"
     Sleep 328
 
-    ControlSend "{w down}",, mcWin
+    ; Move Back (W) - YAZAN INPUT
+    SafeControlSend "{w down}"
     if (!SleepCheck(1390)) 
         return
 
-    ControlSend "{w up}",, mcWin
+    SafeControlSend "{w up}"
     Sleep 750
 
-    ControlSend "{a down}",, mcWin
-    ControlSend "{j down}",, mcWin ; Re-assert mining
+    ; Move Left (A) and Mine (J)
+    SafeControlSend "{a down}"
+    SafeControlSend "{j down}"
     
     if (!SleepCheck(78485)) 
         return
 
-    ControlSend "{a up}",, mcWin
+    ; Stop Left (A)
+    SafeControlSend "{a up}"
     Sleep 625
 
-    ControlSend "{w down}",, mcWin
+    ; Move Back (W) - YAZAN INPUT
+    SafeControlSend "{w down}"
     if (!SleepCheck(1547)) 
         return
 
-    ControlSend "{w up}",, mcWin
+    SafeControlSend "{w up}"
     
     if (toggle)
         SetTimer(FarmLoop, 10)
 }
 
-; --- NEW: MOUSE LOCK FUNCTION ---
 LockMouseInGame()
 {
     global mcWin
-    ; Only lock the mouse if Minecraft is the ACTIVE window
     if WinActive(mcWin)
     {
-        WinGetPos &X, &Y, &W, &H, mcWin
-        ; Force cursor to the exact center of the Minecraft window
-        DllCall("SetCursorPos", "int", X + (W // 2), "int", Y + (H // 2))
+        try {
+            WinGetPos &X, &Y, &W, &H, mcWin
+            DllCall("SetCursorPos", "int", X + (W // 2), "int", Y + (H // 2))
+        }
     }
 }
 
@@ -114,7 +119,7 @@ SleepCheck(duration)
             return false
         }
         if (A_TickCount - lastReinforce > 2000) {
-            ControlSend "{j down}",, mcWin
+            SafeControlSend "{j down}"
             lastReinforce := A_TickCount
         }
         Sleep 100
@@ -124,6 +129,24 @@ SleepCheck(duration)
 
 ReleaseAll()
 {
+    SafeControlSend "{d up}{w up}{a up}{j up}{Alt up}"
+}
+
+; --- SAFE SEND FUNCTION (Fixes Crash) ---
+SafeControlSend(keys)
+{
     global mcWin
-    ControlSend "{d up}{w up}{a up}{j up}{Alt up}",, mcWin
+    Loop 2 ; Retry logic
+    {
+        try 
+        {
+            ControlSend keys,, mcWin
+            return ; Success
+        }
+        catch 
+        {
+            Sleep 20 ; Wait 20ms and try again
+        }
+    }
+    ; If it fails twice, it skips the input without crashing
 }

@@ -4,7 +4,7 @@
 SetKeyDelay 50, 50
 
 toggle := false
-mcWin := "ahk_exe javaw.exe" ; Target standard Java Minecraft
+mcWin := "ahk_exe javaw.exe"
 
 F3::
 {
@@ -18,7 +18,7 @@ F3::
             try ControlFocus "ahk_exe javaw.exe"
             ToolTip("Farming: ON (Mouse Locked in Game)")
             SetTimer(FarmLoop, 100)
-            SetTimer(LockMouseInGame, 10) ; Runs every 10ms to freeze mouse
+            SetTimer(LockMouseInGame, 10)
             SetTimer(() => ToolTip(), -2000)
         }
         else
@@ -31,7 +31,7 @@ F3::
     {
         ToolTip("Farming: OFF")
         SetTimer(FarmLoop, 0)
-        SetTimer(LockMouseInGame, 0) ; Turn off mouse lock
+        SetTimer(LockMouseInGame, 0)
         ReleaseAll()
         SetTimer(() => ToolTip(), -2000)
     }
@@ -45,68 +45,67 @@ FarmLoop()
     if (!toggle)
         return
 
-    ; Auto-Correct Alt Key (prevents menu sticking)
-    ControlSend "{Alt up}",, mcWin
+    ; Auto-Correct Alt Key
+    SafeControlSend "{Alt up}"
     
     ; --- PATTERN START ---
     
-    ; [cite_start]Initial Pause [cite: 1]
     if (!SleepCheck(1234)) 
         return
 
-    ; [cite_start]Move Right (D) [cite: 1]
-    ControlSend "{d down}",, mcWin
+    ; Move Right (D)
+    SafeControlSend "{d down}"
     Sleep 235
     
-    ; [cite_start]Start Mining (J instead of Click) [cite: 2]
-    ControlSend "{j down}",, mcWin
+    ; Start Mining (J)
+    SafeControlSend "{j down}"
     
-    ; [cite_start]Long Mining/Walking duration (82s) [cite: 2]
+    ; Long Mining/Walking duration
     if (!SleepCheck(82156)) 
         return
 
-    ; [cite_start]Stop moving Right [cite: 2]
-    ControlSend "{d up}",, mcWin
+    ; Stop moving Right
+    SafeControlSend "{d up}"
     Sleep 109
     
-    ; [cite_start]Stop Mining [cite: 2]
-    ControlSend "{j up}",, mcWin
+    ; Stop Mining
+    SafeControlSend "{j up}"
     Sleep 328
 
-    ; [cite_start]Move Back (S) [cite: 2]
-    ControlSend "{s down}",, mcWin
+    ; Move Back (S) - CIZARE INPUT
+    SafeControlSend "{s down}"
     if (!SleepCheck(1079)) 
         return
-    ControlSend "{s up}",, mcWin
+    SafeControlSend "{s up}"
     Sleep 359
 
-    ; [cite_start]Move Left (A) [cite: 3]
-    ControlSend "{a down}",, mcWin
+    ; Move Left (A)
+    SafeControlSend "{a down}"
     Sleep 203
     
-    ; [cite_start]Start Mining (J instead of Click) [cite: 3]
-    ControlSend "{j down}",, mcWin
+    ; Start Mining (J)
+    SafeControlSend "{j down}"
     
-    ; [cite_start]Long Mining/Walking duration (78s) [cite: 3]
+    ; Long Mining/Walking duration
     if (!SleepCheck(78047)) 
         return
 
-    ; [cite_start]Stop Mining [cite: 3]
-    ControlSend "{j up}",, mcWin
+    ; Stop Mining
+    SafeControlSend "{j up}"
     Sleep 156
     
-    ; [cite_start]Stop moving Left [cite: 4]
-    ControlSend "{a up}",, mcWin
+    ; Stop moving Left
+    SafeControlSend "{a up}"
     
-    ; [cite_start]Long pause before return trip [cite: 4]
+    ; Pause before return trip
     if (!SleepCheck(6719)) 
         return
 
-    ; [cite_start]Move Back (S) [cite: 4]
-    ControlSend "{s down}",, mcWin
+    ; Move Back (S) - CIZARE INPUT
+    SafeControlSend "{s down}"
     if (!SleepCheck(1500)) 
         return
-    ControlSend "{s up}",, mcWin
+    SafeControlSend "{s up}"
 
     ; --- PATTERN END ---
 
@@ -114,16 +113,13 @@ FarmLoop()
         SetTimer(FarmLoop, 10)
 }
 
-; --- MOUSE LOCK FUNCTION ---
 LockMouseInGame()
 {
     global mcWin
-    ; Only lock the mouse if Minecraft is the ACTIVE window
     if WinActive(mcWin)
     {
         try {
             WinGetPos &X, &Y, &W, &H, mcWin
-            ; Force cursor to the exact center of the Minecraft window
             DllCall("SetCursorPos", "int", X + (W // 2), "int", Y + (H // 2))
         }
     }
@@ -141,9 +137,8 @@ SleepCheck(duration)
             ReleaseAll()
             return false
         }
-        ; Reinforce holding 'j' every 2 seconds (prevents glitches)
         if (A_TickCount - lastReinforce > 2000) {
-            ControlSend "{j down}",, mcWin
+            SafeControlSend "{j down}"
             lastReinforce := A_TickCount
         }
         Sleep 100
@@ -153,7 +148,24 @@ SleepCheck(duration)
 
 ReleaseAll()
 {
+    SafeControlSend "{d up}{w up}{a up}{s up}{j up}{Alt up}"
+}
+
+; --- SAFE SEND FUNCTION (Fixes Crash) ---
+SafeControlSend(keys)
+{
     global mcWin
-    ; Releases all keys used in your specific loop
-    ControlSend "{d up}{w up}{a up}{s up}{j up}{Alt up}",, mcWin
+    Loop 2 ; Retry logic
+    {
+        try 
+        {
+            ControlSend keys,, mcWin
+            return ; Success
+        }
+        catch 
+        {
+            Sleep 20 ; Wait 20ms and try again
+        }
+    }
+    ; If it fails twice, it skips the input without crashing
 }
