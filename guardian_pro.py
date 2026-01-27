@@ -12,6 +12,7 @@ import subprocess
 import sys
 import re
 import shutil
+import random
 
 # Windows API for window focus & title reading
 try:
@@ -69,7 +70,9 @@ def resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 def type_human(text):
-    pyautogui.write(text, interval=0.12)
+    for char in text:
+        pyautogui.write(char)
+        time.sleep(random.uniform(0.05, 0.15))
 
 def is_minecraft_focused():
     """Returns True ONLY if the active window is Minecraft"""
@@ -151,12 +154,19 @@ def attack_loop():
             if not state["attacking"]:
                 keyboard_ctl.press('j')
                 state["attacking"] = True
+            
+            # HUMANIZATION: 1% chance to release 'J' for a split second
+            if random.random() < 0.01:
+                keyboard_ctl.release('j')
+                time.sleep(random.uniform(0.1, 0.3))
+                keyboard_ctl.press('j')
         else:
             if state["attacking"]:
                 keyboard_ctl.release('j')
                 state["attacking"] = False
         
-        time.sleep(0.1)
+        # Random sleep instead of fixed 0.1s
+        time.sleep(random.uniform(0.08, 0.12))
 
 # --- SMART LOGIC ENGINE ---
 def run_smart_farm_logic():
@@ -235,6 +245,7 @@ def run_smart_farm_logic():
                         continue 
                 
                 keyboard_ctl.release(strafe_key) 
+                time.sleep(random.uniform(0.05, 0.15)) # Pause before turning
                 mode = "turning"
             else:
                 keyboard_ctl.press(strafe_key)
@@ -246,10 +257,11 @@ def run_smart_farm_logic():
                 mode = "strafing"
                 row_start_z = pos['z'] 
                 state["skip_dist_check"] = False 
+                time.sleep(random.uniform(0.05, 0.15)) # Pause before strafing again
             else:
                 keyboard_ctl.press(turn_key)
 
-        time.sleep(0.2) 
+        time.sleep(random.uniform(0.18, 0.25))
 
 def trigger_emergency_stop():
     state["emergency_stop"] = True
@@ -306,9 +318,9 @@ def check_location():
     if state["mode"] == "test": return '{"server":"test","gametype":"SKYBLOCK","mode":"garden"}'
 
     pyautogui.press('t')
-    time.sleep(0.2)
+    time.sleep(random.uniform(0.1, 0.3))
     type_human('/locraw')
-    time.sleep(0.2)
+    time.sleep(random.uniform(0.1, 0.3))
     pyautogui.press('enter')
     
     start = time.time()
