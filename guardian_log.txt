@@ -1,0 +1,17 @@
+Smart Fall & Death Guard
+
+Fall Guard (Y-Level Check): The bot now understands Gravity. It will no longer panic and trigger a "Stuck" alarm if your X/Z coordinates stop moving while you are falling.
+
+Instant Void Recovery: Added a specialized handle_death() system.
+
+    Old Behavior: Died -> Waited for slow server check -> Panicked on respawn wall hit.
+
+    New Behavior: Detects "fell into the void" -> Instantly grants immunity to wall collisions -> Waits 4s for respawn -> Resumes immediately without warping.
+    
+    Full Config Persistence: The launcher now remembers all your settings, including:
+
+Turn Style (Yazan vs. Cizare)
+
+Operation Mode (Normal vs. Test)
+
+Monitor Selection
