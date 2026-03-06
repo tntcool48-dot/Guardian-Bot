@@ -1,17 +1,21 @@
-Smart Fall & Death Guard
+v1.4.0 - The Anti-Lag & QoL Update
 
-Fall Guard (Y-Level Check): The bot now understands Gravity. It will no longer panic and trigger a "Stuck" alarm if your X/Z coordinates stop moving while you are falling.
+UI & Customization
 
-Instant Void Recovery: Added a specialized handle_death() system.
+    Tabbed GUI: Cleaned up the interface into separate tabs so it's not a massive wall of settings.
 
-    Old Behavior: Died -> Waited for slow server check -> Panicked on respawn wall hit.
+    Auto-Save: The bot actually remembers your settings now. No more re-typing your config every time you launch.
 
-    New Behavior: Detects "fell into the void" -> Instantly grants immunity to wall collisions -> Waits 4s for respawn -> Resumes immediately without warping.
-    
-    Full Config Persistence: The launcher now remembers all your settings, including:
+    Full Control: Added sliders for the kill-switch, stuck thresholds, and row distances. You can also change your attack bind (no longer forced to use 'j') and toggle any failsafe on or off.
 
-Turn Style (Yazan vs. Cizare)
+Engine Fixes & Anti-Cheat
 
-Operation Mode (Normal vs. Test)
+    Fixed False Alarms (Anti-Lag): If Hypixel lags mid-row, the bot won't instantly panic and trigger the distance alarm anymore. It waits up to 5 seconds for the server to catch up.
 
-Monitor Selection
+    Smarter Stuck Detection: Turning is way smoother. The engine now ignores minor X-axis sliding, so weird block hitboxes won't break your rows.
+
+    New Death Recovery: Scrapped the return-trench idea. The bot now just waits for the hub to load and hits 'Z' to teleport straight back to the farm spawn.
+
+    No More Discord Spam: If you alt-tab while the bot is trying to type /warp garden or /locraw, it instantly aborts. Your chats are safe.
+
+    Watchdog Safety: Added a 10-second cooldown to the /locraw check so you don't get flagged for spamming commands during lag spikes. Wrapped all emergency triggers in thread locks so they don't overlap and crash the bot.
