@@ -58,6 +58,7 @@ state = {
     "keys_held": False
 }
 
+state_lock = threading.Lock()
 keyboard_ctl = Controller()
 
 # --- HELPER FUNCTIONS ---
@@ -71,8 +72,14 @@ def resource_path(relative_path):
 
 def type_human(text):
     for char in text:
+        # Abort instantly if focus is lost mid-typing
+        if not is_minecraft_focused():
+            print("[BOT] Focus lost! Aborting text entry.")
+            return False 
+            
         pyautogui.write(char)
         time.sleep(random.uniform(0.05, 0.15))
+    return True
 
 def is_minecraft_focused():
     """Returns True ONLY if the active window is Minecraft"""
@@ -143,6 +150,9 @@ def get_live_coords():
 # --- ATTACK LOOP ---
 def attack_loop():
     while state["running"]:
+        attack_key = state.get("attack_key", "j")
+        humanize = state.get("enable_humanization", True)
+        
         should_attack = (state["active"] and 
                          not state["handling_incident"] and 
                          not state["kill_warning_active"] and
@@ -152,32 +162,30 @@ def attack_loop():
         
         if should_attack:
             if not state["attacking"]:
-                keyboard_ctl.press('j')
+                keyboard_ctl.press(attack_key)
                 state["attacking"] = True
             
-            # HUMANIZATION: 1% chance to release 'J' for a split second
-            if random.random() < 0.01:
-                keyboard_ctl.release('j')
+            # HUMANIZATION: 1% chance to release the key for a split second
+            if humanize and random.random() < 0.01:
+                keyboard_ctl.release(attack_key)
                 time.sleep(random.uniform(0.1, 0.3))
-                keyboard_ctl.press('j')
+                keyboard_ctl.press(attack_key)
         else:
             if state["attacking"]:
-                keyboard_ctl.release('j')
+                keyboard_ctl.release(attack_key)
                 state["attacking"] = False
         
-        # Random sleep instead of fixed 0.1s
-        time.sleep(random.uniform(0.08, 0.12))
+        # Static sleep if robotic, randomized if humanized
+        sleep_time = random.uniform(0.08, 0.12) if humanize else 0.1
+        time.sleep(sleep_time)
 
-# --- SMART LOGIC ENGINE ---
 def run_smart_farm_logic():
-    # DETERMINE STYLE
-    turn_key = 'w' if "yazan" in state["selected_macro"].lower() else 's'
+    turn_key = 'w' if "yazan" in state.get("selected_macro", "yazan").lower() else 's'
     strafe_key = 'd'       
     mode = "strafing"      
     
     last_pos = None
     stuck_ticks = 0
-    STUCK_THRESHOLD = 3    
     row_start_z = None
     
     print(f"[PYTHON] Engine Started. Turn Style: {turn_key.upper()}")
@@ -187,7 +195,12 @@ def run_smart_farm_logic():
             time.sleep(1)
             continue
 
-        # --- PAUSE LOGIC ---
+        # Load dynamic settings from GUI
+        stuck_limit = state.get("stuck_threshold", 3)
+        min_dist = state.get("min_row_distance", 380)
+        macrocheck_enabled = state.get("enable_distance_check", True)
+        humanize = state.get("enable_humanization", True)
+
         is_paused = (not state["active"] or 
                      state["handling_incident"] or 
                      state["kill_warning_active"] or 
@@ -196,13 +209,13 @@ def run_smart_farm_logic():
 
         if is_paused:
             if state["keys_held"]:
-                # Release everything for safety
                 for k in ['w', 'a', 's', 'd']: keyboard_ctl.release(k)
                 state["keys_held"] = False
             
             time.sleep(0.2)
             last_pos = None 
             row_start_z = None 
+            stuck_ticks = 0
             continue
             
         pos = get_live_coords()
@@ -215,57 +228,68 @@ def run_smart_farm_logic():
         state["current_pos"] = pos 
         if row_start_z is None: row_start_z = pos['z']
 
-        # --- MOVEMENT ---
         state["keys_held"] = True 
 
-        # Stuck Check (Smart: Ignores falling)
-        is_stuck = False
+        # --- MODE-AWARE STUCK ACCUMULATOR ---
         if last_pos:
-            # Only count as "stuck" if X, Z AND Y are all stopped.
-            # If Y is changing (pos['y'] != last_pos['y']), you are falling/jumping.
-            if pos['x'] == last_pos['x'] and pos['z'] == last_pos['z'] and pos['y'] == last_pos['y']:
-                stuck_ticks += 1
-            else:
-                stuck_ticks = 0 
+            if mode == "strafing":
+                # During the long row, ONLY monitor Z and Y (Ignores X sliding)
+                if pos['z'] == last_pos['z'] and pos['y'] == last_pos['y']:
+                    stuck_ticks += 1
+                else:
+                    stuck_ticks = 0
+            elif mode == "turning":
+                # During the turn gap, ONLY monitor X and Y (Because Z shouldn't move anyway)
+                if pos['x'] == last_pos['x'] and pos['y'] == last_pos['y']:
+                    stuck_ticks += 1
+                else:
+                    stuck_ticks = 0
         last_pos = pos
         
         if state["mode"] == "test" and state.get("force_stuck", False):
-            stuck_ticks = STUCK_THRESHOLD + 1
+            stuck_ticks = stuck_limit + 1
             state["force_stuck"] = False 
 
-        if stuck_ticks >= STUCK_THRESHOLD:
-            is_stuck = True
-            stuck_ticks = 0
+        # --- TRIGGER FLAGS ---
+        is_stuck = (stuck_ticks >= stuck_limit)
+        is_lagging_hard = (stuck_ticks >= 25) # ~5 seconds of complete freeze
 
-        # Logic Machine
+        # --- LOGIC MACHINE ---
         if mode == "strafing":
             if is_stuck:
                 dist_traveled = abs(pos['z'] - row_start_z)
-                if dist_traveled < MIN_ROW_DISTANCE:
-                    if state["skip_dist_check"]:
-                        pass 
-                    else:
-                        trigger_emergency_stop()
-                        continue 
                 
-                keyboard_ctl.release(strafe_key) 
-                time.sleep(random.uniform(0.05, 0.15)) # Pause before turning
-                mode = "turning"
+                if dist_traveled >= min_dist or state["skip_dist_check"] or not macrocheck_enabled:
+                    # NORMAL TURN: We hit the wall at the end of the row
+                    keyboard_ctl.release(strafe_key) 
+                    time.sleep(random.uniform(0.05, 0.15) if humanize else 0.1)
+                    mode = "turning"
+                    stuck_ticks = 0 
+                else:
+                    # EARLY STUCK (Lag Failsafe): Don't panic, keep holding the key
+                    keyboard_ctl.press(strafe_key)
+                    
+                    if is_lagging_hard:
+                        trigger_emergency_stop()
+                        stuck_ticks = 0 
             else:
                 keyboard_ctl.press(strafe_key)
 
         elif mode == "turning":
             if is_stuck:
+                # TURN COMPLETE: We hit the wall inside the turn gap
                 keyboard_ctl.release(turn_key)
                 strafe_key = 'a' if strafe_key == 'd' else 'd'
                 mode = "strafing"
+                
                 row_start_z = pos['z'] 
                 state["skip_dist_check"] = False 
-                time.sleep(random.uniform(0.05, 0.15)) # Pause before strafing again
+                stuck_ticks = 0 
+                time.sleep(random.uniform(0.05, 0.15) if humanize else 0.1)
             else:
                 keyboard_ctl.press(turn_key)
 
-        time.sleep(random.uniform(0.18, 0.25))
+        time.sleep(random.uniform(0.18, 0.25) if humanize else 0.2)
 
 def trigger_emergency_stop():
     state["emergency_stop"] = True
@@ -274,7 +298,8 @@ def trigger_emergency_stop():
     state["bg_color"] = "#FF0000"
     
     # Release Keys
-    for k in ['w', 'a', 's', 'd', 'j']: keyboard_ctl.release(k)
+    attack_k = state.get("attack_key", "j")
+    for k in ['w', 'a', 's', 'd', attack_k]: keyboard_ctl.release(k)
     state["attacking"] = False
     
     # Start Alarm Sound Thread
@@ -321,11 +346,26 @@ def check_location():
     state["locraw_response"] = None
     if state["mode"] == "test": return '{"server":"test","gametype":"SKYBLOCK","mode":"garden"}'
 
+    # Cooldown check: prevent spamming /locraw too fast
+    if time.time() - state.get("last_locraw_time", 0) < 10:
+        print("[BOT] Locraw on cooldown. Waiting...")
+        time.sleep(2)
+        return "unknown"
+
+    if not is_minecraft_focused():
+        return "unknown"
+
+    state["last_locraw_time"] = time.time()
+    
     pyautogui.press('t')
     time.sleep(random.uniform(0.1, 0.3))
-    type_human('/locraw')
+    
+    # Only press enter if the typing finished successfully without losing focus
+    typing_success = type_human('/locraw')
     time.sleep(random.uniform(0.1, 0.3))
-    pyautogui.press('enter')
+    
+    if typing_success and is_minecraft_focused():
+        pyautogui.press('enter')
     
     start = time.time()
     while time.time() - start < 5:
@@ -334,8 +374,9 @@ def check_location():
     return "unknown"
 
 def handle_incident():
-    if state["handling_incident"]: return
-    state["handling_incident"] = True
+    with state_lock:
+        if state["handling_incident"]: return
+        state["handling_incident"] = True
     
     try:
         if state["engine"] == "ahk": pyautogui.press('f3')
@@ -357,10 +398,24 @@ def handle_incident():
             state["bg_color"] = "#00FFFF"
             
             if state["mode"] != "test":
+                # Wait for user to focus Minecraft before doing anything
+                while not is_minecraft_focused():
+                    state["status_text"] = "AWAITING FOCUS"
+                    time.sleep(1)
+                
+                state["status_text"] = f"RECOVERY ATTEMPT {i}"
                 pyautogui.click()
-                time.sleep(0.2); pyautogui.press('t'); time.sleep(0.2)
-                type_human('/warp garden')
-                time.sleep(0.2); pyautogui.press('enter'); time.sleep(8)
+                time.sleep(random.uniform(0.1, 0.3))
+                
+                if is_minecraft_focused(): pyautogui.press('t')
+                time.sleep(random.uniform(0.1, 0.3))
+                
+                # Only hit enter if it successfully typed the whole command
+                if type_human('/warp garden'):
+                    time.sleep(random.uniform(0.1, 0.3))
+                    if is_minecraft_focused(): pyautogui.press('enter')
+                
+                time.sleep(8)
             else: time.sleep(2)
             
             if '"mode":"garden"' in check_location():
@@ -368,7 +423,7 @@ def handle_incident():
                 state["bg_color"] = "#0000AA"
                 time.sleep(2.0)
 
-                if state["mode"] != "test":
+                if state["mode"] != "test" and is_minecraft_focused():
                     pyautogui.keyDown('space'); pyautogui.keyUp('space')
                     time.sleep(0.05) 
                     pyautogui.keyDown('space'); pyautogui.keyUp('space')
@@ -384,10 +439,12 @@ def handle_incident():
             time.sleep(2)
     except Exception as e:
         show_error("Recovery Error", str(e))
-    finally: state["handling_incident"] = False
+    finally: 
+        with state_lock:
+            state["handling_incident"] = False
 
 def monitor_logs():
-    if not state["final_log_path"] or not os.path.exists(state["final_log_path"]): return
+    if not state.get("final_log_path") or not os.path.exists(state["final_log_path"]): return
     try:
         with open(state["final_log_path"], "r", encoding="utf-8", errors='ignore') as f:
             f.seek(0, 2)
@@ -398,42 +455,51 @@ def monitor_logs():
                         time.sleep(0.1); continue
                     if '{"server":' in line: state["locraw_response"] = line
                     
-                    # LIST 1: Slow Server Issues (Requires Warp)
                     incident_triggers = ["Sending to server", "Evacuating to Hub", "A disconnect occurred"]
-                    
-                    # LIST 2: Fast Death Issues (Requires Reset Only)
                     death_triggers = ["fell into the void", "slain by", "burned to death", "You died!"]
 
-                    if not state["handling_incident"]:
-                        # Check Server Issues
-                        if any(t in line for t in incident_triggers):
+                    with state_lock:
+                        is_handling = state["handling_incident"]
+
+                    if not is_handling:
+                        # Only handle Hub kicks if enabled
+                        if state.get("handle_hub", True) and any(t in line for t in incident_triggers):
                             if state["mode"] == "normal":
                                 threading.Thread(target=handle_incident, daemon=True).start()
                         
-                        # Check Death Issues (NEW)
-                        elif any(t in line for t in death_triggers):
+                        # Only handle Deaths if enabled
+                        elif state.get("handle_deaths", True) and any(t in line for t in death_triggers):
                              threading.Thread(target=handle_death, daemon=True).start()
-
-                else: time.sleep(0.5)
-    except: pass
+                else: 
+                    time.sleep(0.5)
+    except Exception as e: 
+        print(f"Log Monitor Error: {e}")
 
 def handle_death():
-    """Handles death by quickly resetting safety checks without a full warp cycle."""
-    if state["handling_incident"]: return
-    state["handling_incident"] = True
+    with state_lock:
+        if state["handling_incident"]: return
+        state["handling_incident"] = True
     
     try:
-        print("[BOT] Death detected. Instant immunity applied.")
-        state["status_text"] = "DEATH DETECTED - RECOVERING"
-        state["bg_color"] = "#FFA500" # Orange for warning
+        print("[BOT] Death detected. Waiting for Garden Hub respawn...")
+        state["status_text"] = "DEATH DETECTED - RESPAWNING"
+        state["bg_color"] = "#FFA500" 
         
-        # 1. INSTANT IMMUNITY: The next wall hit will NOT trigger an alarm.
+        # Wait for standard Skyblock respawn time
+        time.sleep(4.0)
+        
+        # Only press Z if Minecraft is actually the active window
+        if is_minecraft_focused() or state["mode"] == "test":
+            state["status_text"] = "TELEPORTING TO START..."
+            print("[BOT] Pressing 'Z' to teleport.")
+            pyautogui.press('z')
+            time.sleep(2.0) # Wait for teleport to finish loading
+        else:
+            print("[BOT] WARNING: Minecraft lost focus. Could not press 'Z'.")
+            
+        # INSTANT IMMUNITY: The next wall hit will NOT trigger an alarm
         state["skip_dist_check"] = True
         
-        # 2. Wait for Respawn (Standard Skyblock respawn is ~3-4s)
-        time.sleep(2)
-        
-        # 3. Resume
         state["status_text"] = "RESUMING..."
         state["bg_color"] = "#008000"
         time.sleep(1)
@@ -442,14 +508,17 @@ def handle_death():
     except Exception as e:
         print(f"Death Handle Error: {e}")
     finally:
-        state["handling_incident"] = False
+        with state_lock:
+            state["handling_incident"] = False
 
 def timer_loop():
     while state["running"]:
         if state["active"] and not state["emergency_stop"]:
             if state["kill_timer_start"] is None: state["kill_timer_start"] = time.time()
             elapsed = time.time() - state["kill_timer_start"]
-            if elapsed > ONE_HOUR_SECONDS: trigger_kill_switch()
+            kill_limit = state.get("kill_timer_seconds", 3600)
+            if elapsed > kill_limit: 
+                trigger_kill_switch()
             
             left = int((ONE_HOUR_SECONDS - elapsed) / 60)
             if not state["kill_warning_active"] and not state["handling_incident"]:
@@ -509,7 +578,8 @@ def full_shutdown():
         except: pass
     if state["engine"] == "python":
         try:
-            for k in ['w','a','s','d','j']: keyboard_ctl.release(k)
+            attack_k = state.get("attack_key", "j")
+            for k in ['w', 'a', 's', 'd', attack_k]: keyboard_ctl.release(k)
         except: pass
     os._exit(0)
 
@@ -529,7 +599,8 @@ def on_press(key):
             if state["active"]: state["skip_dist_check"] = True
         
         if not state["active"] and state["engine"] == "python":
-            for k in ['w','a','s','d','j']: keyboard_ctl.release(k)
+            attack_k = state.get("attack_key", "j")
+            for k in ['w', 'a', 's', 'd', attack_k]: keyboard_ctl.release(k)
             state["attacking"] = False
         if state["engine"] == "ahk": pyautogui.press('f3')
     
@@ -543,54 +614,115 @@ def on_press(key):
     except AttributeError:
         pass
 
-# --- GUI CLASS ---
 class LauncherApp:
     def __init__(self):
-        self.root = tk.Tk(); self.root.title("Guardian pro"); self.root.geometry("500x650")
+        self.root = tk.Tk()
+        self.root.title("Guardian Pro")
+        self.root.geometry("550x650") # Slightly taller to fit the new options
         self.root.configure(bg="#1e1e1e")
-        style = ttk.Style(); style.theme_use('clam')
+        style = ttk.Style()
+        style.theme_use('clam')
         
-        tk.Label(self.root, text="GUARDIAN AUTOMATION", font=("Segoe UI", 14, "bold"), fg="#00ff00", bg="#1e1e1e").pack(pady=20)
+        # Configure Notebook (Tabs) style for dark mode
+        style.configure("TNotebook", background="#1e1e1e", borderwidth=0)
+        style.configure("TNotebook.Tab", background="#333", foreground="white", padding=[10, 5])
+        style.map("TNotebook.Tab", background=[("selected", "#006600")])
+        style.configure("TFrame", background="#1e1e1e")
+
+        tk.Label(self.root, text="GUARDIAN AUTOMATION", font=("Segoe UI", 16, "bold"), fg="#00ff00", bg="#1e1e1e").pack(pady=15)
         
+        # --- NOTEBOOK SETUP ---
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(expand=True, fill='both', padx=15, pady=(0, 15))
+
+        self.tab_main = ttk.Frame(self.notebook)
+        self.tab_settings = ttk.Frame(self.notebook)
+        self.tab_failsafes = ttk.Frame(self.notebook)
+
+        self.notebook.add(self.tab_main, text="Main Controls")
+        self.notebook.add(self.tab_settings, text="Delays & Timers")
+        self.notebook.add(self.tab_failsafes, text="Failsafes")
+
+        # ==========================================
+        # TAB 1: MAIN CONTROLS
+        # ==========================================
         # Log Path
-        tk.Label(self.root, text="Minecraft Log Directory", fg="#cccccc", bg="#1e1e1e").pack(pady=(10,0))
+        tk.Label(self.tab_main, text="Minecraft Log Directory", fg="#cccccc", bg="#1e1e1e", font=("Segoe UI", 10, "bold")).pack(pady=(15,5))
         self.path_var = tk.StringVar()
-        tk.Entry(self.root, textvariable=self.path_var, width=55, bg="#333", fg="white", insertbackground="white").pack(pady=5)
-        tk.Button(self.root, text="Browse", command=self.browse_file, bg="#444", fg="white", relief="flat").pack()
+        log_frame = tk.Frame(self.tab_main, bg="#1e1e1e")
+        log_frame.pack(fill="x", padx=30)
+        tk.Entry(log_frame, textvariable=self.path_var, width=50, bg="#333", fg="white", insertbackground="white").pack(side="left", padx=(50,10))
+        tk.Button(log_frame, text="Browse", command=self.browse_file, bg="#444", fg="white", relief="flat").pack(side="left")
         
         # Monitor
-        tk.Label(self.root, text="Display Output", fg="#cccccc", bg="#1e1e1e").pack(pady=(15,0))
-        self.monitor_combo = ttk.Combobox(self.root, state="readonly", width=40)
+        tk.Label(self.tab_main, text="Display Output", fg="#cccccc", bg="#1e1e1e", font=("Segoe UI", 10, "bold")).pack(pady=(20,5))
+        self.monitor_combo = ttk.Combobox(self.tab_main, state="readonly", width=45)
         self.monitors = self.get_monitors()
         self.monitor_combo['values'] = [m['label'] for m in self.monitors]
-        if self.monitors: self.monitor_combo.current(0)
-        self.monitor_combo.pack(pady=5)
+        if self.monitors: 
+            self.monitor_combo.current(0)
+        self.monitor_combo.pack()
 
-        # Settings Frame
-        settings_frame = tk.Frame(self.root, bg="#1e1e1e")
+        # Settings Frame (Inside Main Tab)
+        settings_frame = tk.Frame(self.tab_main, bg="#1e1e1e")
         settings_frame.pack(pady=20)
 
-        # Engine
         tk.Label(settings_frame, text="Engine:", fg="#cccccc", bg="#1e1e1e").grid(row=0, column=0, padx=10, sticky="w")
-        self.engine_var = tk.StringVar(value="ahk")
+        self.engine_var = tk.StringVar(value="python")
         tk.Radiobutton(settings_frame, text="AHK (Legacy)", variable=self.engine_var, value="ahk", bg="#1e1e1e", fg="#00ffff", selectcolor="#333").grid(row=0, column=1, sticky="w")
         tk.Radiobutton(settings_frame, text="Python (Smart)", variable=self.engine_var, value="python", bg="#1e1e1e", fg="#FFAA00", selectcolor="#333").grid(row=0, column=2, sticky="w")
 
-        # Style
         tk.Label(settings_frame, text="Turn Logic:", fg="#cccccc", bg="#1e1e1e").grid(row=1, column=0, padx=10, pady=10, sticky="w")
         self.macro_var = tk.StringVar(value="yazan.ahk")
         tk.Radiobutton(settings_frame, text="Yazan Style (Forward / W)", variable=self.macro_var, value="yazan.ahk", bg="#1e1e1e", fg="white", selectcolor="#333").grid(row=1, column=1, columnspan=2, sticky="w")
         tk.Radiobutton(settings_frame, text="Cizare Style (Backward / S)", variable=self.macro_var, value="cizare.ahk", bg="#1e1e1e", fg="white", selectcolor="#333").grid(row=2, column=1, columnspan=2, sticky="w")
 
-        # Mode
         tk.Label(settings_frame, text="Mode:", fg="#cccccc", bg="#1e1e1e").grid(row=3, column=0, padx=10, pady=(10,0), sticky="w")
         self.mode_var = tk.StringVar(value="normal")
         tk.Radiobutton(settings_frame, text="Standard Play", variable=self.mode_var, value="normal", bg="#1e1e1e", fg="#00ff00", selectcolor="#333").grid(row=3, column=1, pady=(10,0), sticky="w")
         tk.Radiobutton(settings_frame, text="Test Mode", variable=self.mode_var, value="test", bg="#1e1e1e", fg="yellow", selectcolor="#333").grid(row=3, column=2, pady=(10,0), sticky="w")
 
-        # Launch
-        tk.Button(self.root, text="INITIALIZE SYSTEM", bg="#006600", fg="white", font=("Segoe UI", 11, "bold"), relief="flat",
-                  command=self.start_bot).pack(pady=20, fill=tk.X, padx=50)
+        # Attack Keybind
+        tk.Label(settings_frame, text="Attack Bind:", fg="#cccccc", bg="#1e1e1e").grid(row=4, column=0, padx=10, pady=(15,0), sticky="w")
+        self.attack_key_var = tk.StringVar(value="j")
+        tk.Entry(settings_frame, textvariable=self.attack_key_var, width=5, bg="#333", fg="white", justify="center", insertbackground="white").grid(row=4, column=1, pady=(15,0), sticky="w")
+
+        # ==========================================
+        # TAB 2: DELAYS & TIMERS
+        # ==========================================
+        self.stuck_threshold_var = tk.IntVar(value=3)
+        tk.Label(self.tab_settings, text="Stuck Tick Threshold (Ticks stuck before turning):", bg="#1e1e1e", fg="#cccccc").pack(anchor="w", padx=20, pady=(20, 5))
+        tk.Scale(self.tab_settings, from_=1, to=10, orient="horizontal", variable=self.stuck_threshold_var, bg="#1e1e1e", fg="white", highlightthickness=0).pack(fill="x", padx=20)
+
+        self.kill_timer_var = tk.IntVar(value=60)
+        tk.Label(self.tab_settings, text="Kill-Switch Timer (Minutes before pause alarm):", bg="#1e1e1e", fg="#cccccc").pack(anchor="w", padx=20, pady=(15, 5))
+        tk.Scale(self.tab_settings, from_=10, to=120, resolution=5, orient="horizontal", variable=self.kill_timer_var, bg="#1e1e1e", fg="white", highlightthickness=0).pack(fill="x", padx=20)
+
+        self.min_dist_var = tk.IntVar(value=380)
+        tk.Label(self.tab_settings, text="Minimum Row Distance (Blocks expected per row):", bg="#1e1e1e", fg="#cccccc").pack(anchor="w", padx=20, pady=(15, 5))
+        tk.Scale(self.tab_settings, from_=50, to=500, resolution=10, orient="horizontal", variable=self.min_dist_var, bg="#1e1e1e", fg="white", highlightthickness=0).pack(fill="x", padx=20)
+
+        # ==========================================
+        # TAB 3: FAILSAFES
+        # ==========================================
+        tk.Label(self.tab_failsafes, text="Active Protections", font=("Segoe UI", 12, "bold"), bg="#1e1e1e", fg="white").pack(anchor="w", padx=20, pady=(20, 10))
+
+        self.enable_hub_handling = tk.BooleanVar(value=True)
+        tk.Checkbutton(self.tab_failsafes, text="Enable Hub Disconnect Recovery (/warp garden)", variable=self.enable_hub_handling, bg="#1e1e1e", fg="#00FFFF", selectcolor="#333", activebackground="#1e1e1e", activeforeground="white").pack(anchor="w", padx=20, pady=5)
+
+        self.enable_death_handling = tk.BooleanVar(value=True)
+        tk.Checkbutton(self.tab_failsafes, text="Enable Death Recovery (Teleport using 'Z' key)", variable=self.enable_death_handling, bg="#1e1e1e", fg="#FFA500", selectcolor="#333", activebackground="#1e1e1e", activeforeground="white").pack(anchor="w", padx=20, pady=5)
+
+        self.enable_distance_check = tk.BooleanVar(value=True)
+        tk.Checkbutton(self.tab_failsafes, text="Enable Macrocheck (Distance Stop Alarm)", variable=self.enable_distance_check, bg="#1e1e1e", fg="#FF0000", selectcolor="#333", activebackground="#1e1e1e", activeforeground="white").pack(anchor="w", padx=20, pady=5)
+
+        self.enable_humanization = tk.BooleanVar(value=True)
+        tk.Checkbutton(self.tab_failsafes, text="Enable Input Humanization (Randomized delays)", variable=self.enable_humanization, bg="#1e1e1e", fg="#00FF00", selectcolor="#333", activebackground="#1e1e1e", activeforeground="white").pack(anchor="w", padx=20, pady=5)
+
+        # ==========================================
+        # PERSISTENT BOTTOM BUTTON
+        # ==========================================
+        tk.Button(self.root, text="INITIALIZE SYSTEM", bg="#006600", fg="white", font=("Segoe UI", 12, "bold"), relief="flat", command=self.start_bot).pack(fill="x", padx=50, pady=(0, 20), ipady=5)
 
         self.load_config()
         self.root.mainloop()
@@ -601,7 +733,8 @@ class LauncherApp:
                 mons = []
                 for i, m in enumerate(sct.monitors):
                     if i == 0: continue
-                    m['label'] = f"Display {i}: {m['width']}x{m['height']}"; m['index'] = i
+                    m['label'] = f"Display {i}: {m['width']}x{m['height']}"
+                    m['index'] = i
                     mons.append(m)
                 return mons
         except Exception as e:
@@ -609,29 +742,44 @@ class LauncherApp:
             return []
 
     def browse_file(self):
-        f = filedialog.askopenfilename(filetypes=[("Log", "*.log")]); 
-        if f: self.path_var.set(f)
+        f = filedialog.askopenfilename(filetypes=[("Log", "*.log")])
+        if f: 
+            self.path_var.set(f)
 
     def load_config(self):
         if os.path.exists(CONFIG_FILE):
             try:
                 with open(CONFIG_FILE, "r") as f:
                     data = json.load(f)
-                    self.macro_var.set(data.get("selected_macro", "yazan.ahk")) # Loads Yazan/Cizare
-                    self.mode_var.set(data.get("mode", "normal"))               # Loads Test/Normal
+                    self.macro_var.set(data.get("selected_macro", "yazan.ahk"))
+                    self.mode_var.set(data.get("mode", "normal"))
                     self.path_var.set(data.get("log_path", ""))
-                    self.engine_var.set(data.get("engine", "ahk"))
+                    self.engine_var.set(data.get("engine", "python"))
+                    self.attack_key_var.set(data.get("attack_key", "j"))
+                    
+                    self.stuck_threshold_var.set(data.get("stuck_threshold", 3))
+                    self.kill_timer_var.set(data.get("kill_timer_mins", 60))
+                    self.min_dist_var.set(data.get("min_row_distance", 380))
+                    
+                    self.enable_hub_handling.set(data.get("enable_hub_handling", True))
+                    self.enable_death_handling.set(data.get("enable_death_handling", True))
+                    self.enable_distance_check.set(data.get("enable_distance_check", True))
+                    self.enable_humanization.set(data.get("enable_humanization", True))
+
                     saved_idx = data.get("monitor_index", 0)
                     if 0 <= saved_idx < len(self.monitors):
                         self.monitor_combo.current(saved_idx)
-            except: pass
+            except Exception as e: 
+                print(f"Warning: Failed to load config cleanly: {e}")
 
     def start_bot(self):
         raw = self.path_var.get().strip().strip('"')
         if os.path.isdir(raw):
             c = os.path.join(raw, "logs", "latest.log")
-            if os.path.exists(c): raw = c
-            else: raw = os.path.join(raw, "latest.log")
+            if os.path.exists(c): 
+                raw = c
+            else: 
+                raw = os.path.join(raw, "latest.log")
         
         if not os.path.exists(raw): 
             messagebox.showerror("Configuration Error", "Invalid Log Path provided.")
@@ -657,20 +805,36 @@ class LauncherApp:
             json.dump({
                 "log_path": raw, 
                 "engine": self.engine_var.get(), 
-                
-                # --- ADD THESE LINES ---
-                "selected_macro": self.macro_var.get(),  # Saves Yazan/Cizare
-                "mode": self.mode_var.get(),             # Saves Test/Normal
-                "monitor_index": self.monitor_combo.current() # Saves Monitor Selection
-                # -----------------------
-            }, f)
+                "selected_macro": self.macro_var.get(),
+                "mode": self.mode_var.get(),
+                "attack_key": self.attack_key_var.get(),
+                "monitor_index": self.monitor_combo.current(),
+                "stuck_threshold": self.stuck_threshold_var.get(),
+                "kill_timer_mins": self.kill_timer_var.get(),
+                "min_row_distance": self.min_dist_var.get(),
+                "enable_hub_handling": self.enable_hub_handling.get(),
+                "enable_death_handling": self.enable_death_handling.get(),
+                "enable_distance_check": self.enable_distance_check.get(),
+                "enable_humanization": self.enable_humanization.get()
+            }, f, indent=4)
             
+        # Update Global State
         state.update({
             "final_log_path": raw, 
             "engine": self.engine_var.get(), 
             "selected_macro": self.macro_var.get(), 
             "mode": self.mode_var.get(), 
-            "monitor": self.monitors[self.monitor_combo.current()]
+            "monitor": self.monitors[self.monitor_combo.current()],
+            
+            # --- NEW VARIABLES ---
+            "attack_key": self.attack_key_var.get(),
+            "stuck_threshold": self.stuck_threshold_var.get(),
+            "kill_timer_seconds": self.kill_timer_var.get() * 60,
+            "min_row_distance": self.min_dist_var.get(),
+            "handle_hub": self.enable_hub_handling.get(),
+            "handle_deaths": self.enable_death_handling.get(),
+            "enable_distance_check": self.enable_distance_check.get(),
+            "enable_humanization": self.enable_humanization.get()
         })
         
         self.root.destroy()
