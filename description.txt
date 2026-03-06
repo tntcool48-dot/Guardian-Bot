@@ -1,0 +1,20 @@
+# Guardian Bot - Advanced Minecraft Automation & Security System
+
+## Overview
+Guardian Bot is a comprehensive external automation tool designed to enhance safety and efficiency for Minecraft farming. Unlike standard macros, Guardian Bot operates as a logic-driven supervisor, monitoring game state via log files and a custom helper mod (Guardian Tracker) to make intelligent, real-time decisions.
+
+## Core Features
+
+### 1. Intelligent State Monitoring
+- **Log Analysis:** Continuously parses Minecraft log files to detect world changes, server disconnects, and chat alerts in real-time.
+- **Coordinate Tracking:** Utilizes the "Guardian Tracker" mod to read precise player coordinates and direction, enabling smart navigation rather than blind inputs.
+
+### 2. Safety & Anti-Detection
+- **Fall Guard:** Monitors Y-level changes to instantly detect if the player falls off a farm, triggering immediate corrective action to prevent death or getting stuck.
+- **Humanization Engine:** Injects randomized intervals and micro-movements into inputs to mimic human behavior and evade anti-cheat heuristics.
+- **Kill Switch:** Includes a configurable timer (default: 1 hour) to automatically cease all operations, preventing excessive continuous playtime.
+
+### 3. Macro Management
+- **Seamless Integration:** Designed to handshake with custom AutoHotkey (AHK) scripts.
+- **F3 Toggle:** Global hotkey hook (F3) to instantly pause or resume both the bot logic and any active macros.
+- **Auto-Recovery:** Automatically detects if the player is warped out of the "garden" world and initiates a warping sequence to return and reset the cycle.
